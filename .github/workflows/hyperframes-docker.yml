@@ -1,0 +1,68 @@
+name: Build and Push HyperFrames Docker Image
+
+on:
+  workflow_dispatch: # Allows manual trigger via "Run workflow" button
+  schedule:
+    - cron: '0 0 * * *' # Automatically checks and builds daily at midnight UTC
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  UPSTREAM_REPO: heygen-com/hyperframes
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout official upstream HyperFrames
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+
+      - name: Convert repository name to lowercase and read upstream version
+        id: meta_prep
+        run: |
+          LOWER_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")
+          echo "name=${LOWER_REPO}" >> $GITHUB_OUTPUT
+          echo "version=${APP_VERSION}" >> $GITHUB_OUTPUT
+          echo "full_image=${{ env.REGISTRY }}/${LOWER_REPO}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.meta_prep.outputs.full_image }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.meta_prep.outputs.version }}
+            type=sha
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.test
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Print build status and image URLs
+        run: |
+          echo "No source code changes made. Built directly from upstream ${{ env.UPSTREAM_REPO }}."
+          echo "Latest image URL: ${{ steps.meta_prep.outputs.full_image }}:latest"
+          echo "Versioned image URL: ${{ steps.meta_prep.outputs.full_image }}:${{ steps.meta_prep.outputs.version }}"
