@@ -1,0 +1,283 @@
+name: Build and Push All OpenShorts Multi-Arch Images
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *' # Daily check at midnight UTC
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  UPSTREAM_REPO: mutonby/openshorts
+  IMAGE_BASE: mr0007oo
+
+jobs:
+  # ==========================================
+  # 1. BACKEND SERVICE BUILD (Root Dockerfile)
+  # ==========================================
+  build-backend-arch:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch_tag: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch_tag: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout upstream openshorts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend architecture-specific image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts:build-${{ matrix.arch_tag }}
+          provenance: false
+
+  merge-backend-manifest:
+    needs: build-backend-arch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout upstream for version metadata
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+      - name: Extract metadata
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "latest")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest for Backend
+        run: |
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts"
+          docker buildx imagetools create \
+            -t "${IMG}:latest" \
+            -t "${IMG}:${{ steps.meta.outputs.version }}" \
+            -t "${IMG}:sha-${{ steps.meta.outputs.sha }}" \
+            "${IMG}:build-amd64" \
+            "${IMG}:build-arm64"
+          echo "Successfully published backend: ${IMG}:latest"
+
+  # ==========================================
+  # 2. FRONTEND SERVICE BUILD (Dashboard Context)
+  # ==========================================
+  build-frontend-arch:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch_tag: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch_tag: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout upstream openshorts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend architecture-specific image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dashboard
+          file: ./dashboard/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-frontend:build-${{ matrix.arch_tag }}
+          provenance: false
+
+  merge-frontend-manifest:
+    needs: build-frontend-arch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout upstream for version metadata
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+      - name: Extract metadata
+        id: meta
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest for Frontend
+        run: |
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-frontend"
+          docker buildx imagetools create \
+            -t "${IMG}:latest" \
+            -t "${IMG}:sha-${{ steps.meta.outputs.sha }}" \
+            "${IMG}:build-amd64" \
+            "${IMG}:build-arm64"
+          echo "Successfully published frontend: ${IMG}:latest"
+
+  # ==========================================
+  # 3. RENDERER SERVICE BUILD (Render-Service Dockerfile)
+  # ==========================================
+  build-renderer-arch:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch_tag: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch_tag: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout upstream openshorts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push renderer architecture-specific image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./render-service/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-renderer:build-${{ matrix.arch_tag }}
+          provenance: false
+
+  merge-renderer-manifest:
+    needs: build-renderer-arch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout upstream for version metadata
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+      - name: Extract metadata
+        id: meta
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest for Renderer
+        run: |
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-renderer"
+          docker buildx imagetools create \
+            -t "${IMG}:latest" \
+            -t "${IMG}:sha-${{ steps.meta.outputs.sha }}" \
+            "${IMG}:build-amd64" \
+            "${IMG}:build-arm64"
+          echo "Successfully published renderer: ${IMG}:latest"
+          # ==========================================
+  # 4. FINAL SUMMARY & USAGE ECHO
+  # ==========================================
+  print-summary:
+    needs:
+      - merge-backend-manifest
+      - merge-frontend-manifest
+      - merge-renderer-manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Echo Image Names, Purposes, and Usage
+        run: |
+          echo "=========================================================="
+          echo "  ALL MULTI-ARCH IMAGES (AMD64 & ARM64) PUBLISHED TO GHCR"
+          echo "=========================================================="
+          echo ""
+          echo "1. BACKEND SERVICE (FastAPI, Whisper, Video Processing & yt-dlp)"
+          echo "   Image   : ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts:latest"
+          echo "   Port    : 8000"
+          echo "   Pull Cmd: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts:latest"
+          echo ""
+          echo "2. FRONTEND SERVICE (React Web Dashboard UI)"
+          echo "   Image   : ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-frontend:latest"
+          echo "   Port    : 5175"
+          echo "   Pull Cmd: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-frontend:latest"
+          echo ""
+          echo "3. RENDERER SERVICE (Subtitle & Remotion Motion Graphics Engine)"
+          echo "   Image   : ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-renderer:latest"
+          echo "   Port    : 3100"
+          echo "   Pull Cmd: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/openshorts-renderer:latest"
+          echo "=========================================================="
